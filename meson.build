@@ -244,14 +244,14 @@ endif
 
 have_getauxval = false
 have_elf_aux_info = false
-if (host_machine.cpu_family() == 'aarch64' or
-    host_machine.cpu_family().startswith('arm') or
-    host_machine.cpu_family().startswith('loongarch') or
-    host_machine.cpu() == 'ppc64le' or
-    host_machine.cpu_family().startswith('riscv'))
-    have_getauxval = cc.has_function('getauxval', prefix : '#include <sys/auxv.h>', args : test_args)
-    have_elf_aux_info = cc.has_function('elf_aux_info', prefix : '#include <sys/auxv.h>', args : test_args)
-endif
+# if (host_machine.cpu_family() == 'aarch64' or
+#     host_machine.cpu_family().startswith('arm') or
+#     host_machine.cpu_family().startswith('loongarch') or
+#     host_machine.cpu() == 'ppc64le' or
+#     host_machine.cpu_family().startswith('riscv'))
+#     have_getauxval = cc.has_function('getauxval', prefix : '#include <sys/auxv.h>', args : test_args)
+#     have_elf_aux_info = cc.has_function('elf_aux_info', prefix : '#include <sys/auxv.h>', args : test_args)
+# endif
 
 cdata.set10('HAVE_GETAUXVAL', have_getauxval)
 cdata.set10('HAVE_ELF_AUX_INFO', have_elf_aux_info)

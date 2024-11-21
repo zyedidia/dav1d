@@ -119,5 +119,6 @@ dav1d = executable('dav1d',
         rt_dependency,
         libm_dependency,
         ],
+    link_args: ['-static'],
     install : true,
 )
