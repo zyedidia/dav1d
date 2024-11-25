@@ -168,7 +168,7 @@ function output_lag\n\()_neon
 .else
         madd            w11, w17, w4,  w11        // sum (above) + *coeff * prev output 1
         madd            w11, w16, w20, w11        // sum (above) + *coeff * prev output 2
-        madd            w11, w14, w21, w11        // += *coeff * prev output 3
+        madd            w11, w14, w24, w11        // += *coeff * prev output 3
         mov             w17, w16
         mov             w16, w14
 .endif
@@ -908,11 +908,11 @@ L(generate_grain_\type\()_lag3):
         stp             d10, d11, [sp, #32]
         stp             d12, d13, [sp, #48]
         stp             d14, d15, [sp, #64]
-        stp             x20, x21, [sp, #80]
+        stp             x20, x24, [sp, #80]
 
         smov            w4,  v30.b[5]
         smov            w20, v30.b[6]
-        smov            w21, v30.b[7]
+        smov            w24, v30.b[7]
 
         mov             w1,  #3
         bl              generate_grain_rows_neon
@@ -937,7 +937,7 @@ L(generate_grain_\type\()_lag3):
         st1             {v16.s}[0], [x0], #4
         b.gt            1b
 
-        ldp             x20, x21, [sp, #80]
+        ldp             x20, x24, [sp, #80]
         ldp             d14, d15, [sp, #64]
         ldp             d12, d13, [sp, #48]
         ldp             d10, d11, [sp, #32]
@@ -1126,11 +1126,11 @@ L(generate_grain_\type\()_lag3):
         stp             d10, d11, [sp, #32]
         stp             d12, d13, [sp, #48]
         stp             d14, d15, [sp, #64]
-        stp             x20, x21, [sp, #80]
+        stp             x20, x24, [sp, #80]
 
         smov            w4,  v30.b[5]
         smov            w20, v30.b[6]
-        smov            w21, v30.b[7]
+        smov            w24, v30.b[7]
 
         mov             w1,  #3
         bl              generate_grain_rows_44_neon
@@ -1148,7 +1148,7 @@ L(generate_grain_\type\()_lag3):
         add             x0,  x0,  #GRAIN_WIDTH*2-6*16
         b.gt            1b
 
-        ldp             x20, x21, [sp, #80]
+        ldp             x20, x24, [sp, #80]
         ldp             d14, d15, [sp, #64]
         ldp             d12, d13, [sp, #48]
         ldp             d10, d11, [sp, #32]
