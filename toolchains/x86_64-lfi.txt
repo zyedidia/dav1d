@@ -1,0 +1,12 @@
+[binaries]
+c = '/opt/x86_64-lfi-clang/bin/clang'
+cpp = '/opt/x86_64-lfi-clang/bin/clang++'
+as = '/opt/x86_64-lfi-clang/bin/clang'
+ar = '/opt/x86_64-lfi-clang/bin/llvm-ar'
+strip = '/opt/x86_64-lfi-clang/bin/llvm-strip'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'

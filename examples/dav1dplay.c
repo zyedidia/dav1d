@@ -39,6 +39,10 @@
 #include "dp_fifo.h"
 #include "dp_renderer.h"
 
+void *dav1d_box_malloc(size_t size);
+void *dav1d_box_calloc(size_t nmemb, size_t size);
+void  dav1d_box_free(void *ptr);
+
 #define FRAME_OFFSET_TO_PTS(foff) \
     (uint64_t)(((foff) * rd_ctx->spf) * 1000000000.0 + .5)
 #define TS_TO_PTS(ts) \
@@ -56,7 +60,7 @@ static const Dav1dPlayRenderInfo *renderer_info = { NULL };
 typedef struct render_context
 {
     Dav1dPlaySettings settings;
-    Dav1dSettings lib_settings;
+    Dav1dSettings *lib_settings;
 
     // Renderer private data (passed to callbacks)
     void *rd_priv;
@@ -142,7 +146,7 @@ static void dp_rd_ctx_parse_args(Dav1dPlayRenderContext *rd_ctx,
 {
     int o;
     Dav1dPlaySettings *settings = &rd_ctx->settings;
-    Dav1dSettings *lib_settings = &rd_ctx->lib_settings;
+    Dav1dSettings *lib_settings = rd_ctx->lib_settings;
 
     // Short options
     static const char short_opts[] = "i:vuzgfr:";
@@ -226,6 +230,7 @@ static void dp_rd_ctx_destroy(Dav1dPlayRenderContext *rd_ctx)
     renderer_info->destroy_renderer(rd_ctx->rd_priv);
     dp_fifo_destroy(rd_ctx->fifo);
     SDL_DestroyMutex(rd_ctx->lock);
+    dav1d_box_free(rd_ctx->lib_settings);
     free(rd_ctx);
 }
 
@@ -246,7 +251,8 @@ static Dav1dPlayRenderContext *dp_rd_ctx_create(int argc, char **argv)
     }
 
     // Parse and validate arguments
-    dav1d_default_settings(&rd_ctx->lib_settings);
+    rd_ctx->lib_settings = dav1d_box_calloc(1, sizeof(Dav1dSettings));
+    dav1d_default_settings(rd_ctx->lib_settings);
     memset(&rd_ctx->settings, 0, sizeof(rd_ctx->settings));
     dp_rd_ctx_parse_args(rd_ctx, argc, argv);
 
@@ -404,14 +410,15 @@ static int dp_rd_ctx_handle_seek(Dav1dPlayRenderContext *rd_ctx,
             shift = pts;
         if ((res = input_seek(in_ctx, pts - shift)))
             goto out;
-        Dav1dSequenceHeader seq;
+        Dav1dSequenceHeader *seq = dav1d_box_malloc(sizeof(Dav1dSequenceHeader));
         uint64_t cur_pts;
         do {
             if ((res = input_read(in_ctx, data)))
                 break;
             cur_pts = TS_TO_PTS(data->m.timestamp);
-            res = dav1d_parse_sequence_header(&seq, data->data, data->sz);
+            res = dav1d_parse_sequence_header(seq, data->data, data->sz);
         } while (res && cur_pts < pts);
+        dav1d_box_free(seq);
         if (!res && cur_pts <= pts)
             break;
         if (shift > pts)
@@ -535,7 +542,7 @@ static int decode_frame(Dav1dPicture **p, Dav1dContext *c,
     if ((res = dav1d_get_picture(c, *p)) < 0) {
         // In all error cases, even EAGAIN, p needs to be freed as
         // it is never added to the queue and would leak.
-        free(*p);
+        dav1d_box_free(*p);
         *p = NULL;
         // On EAGAIN, it means dav1d has not enough data to decode
         // therefore this is not a decoding error but just means
@@ -563,9 +570,10 @@ static int decoder_thread_main(void *cookie)
 {
     Dav1dPlayRenderContext *rd_ctx = cookie;
 
-    Dav1dPicture *p;
-    Dav1dContext *c = NULL;
-    Dav1dData data;
+    printf("hi\n");
+    Dav1dPicture **p = dav1d_box_malloc(sizeof(Dav1dPicture));
+    Dav1dContext **c = dav1d_box_calloc(1, sizeof(Dav1dContext*));
+    Dav1dData *data = dav1d_box_malloc(sizeof(Dav1dData));
     DemuxerContext *in_ctx = NULL;
     int res = 0;
     unsigned total, timebase[2], fps[2];
@@ -585,13 +593,13 @@ static int decoder_thread_main(void *cookie)
     rd_ctx->spf = (double)fps[1] / fps[0];
     rd_ctx->total = total;
 
-    if ((res = dav1d_open(&c, &rd_ctx->lib_settings))) {
+    if ((res = dav1d_open(c, rd_ctx->lib_settings))) {
         fprintf(stderr, "Failed opening dav1d decoder\n");
         res = 1;
         goto cleanup;
     }
 
-    if ((res = input_read(in_ctx, &data)) < 0) {
+    if ((res = input_read(in_ctx, data)) < 0) {
         fprintf(stderr, "Failed demuxing input\n");
         res = 1;
         goto cleanup;
@@ -600,18 +608,18 @@ static int decoder_thread_main(void *cookie)
     // Decoder loop
     while (1) {
         if (dp_rd_ctx_should_terminate(rd_ctx) ||
-            (res = dp_rd_ctx_handle_seek(rd_ctx, in_ctx, c, &data)) ||
-            (res = decode_frame(&p, c, &data, in_ctx)))
+            (res = dp_rd_ctx_handle_seek(rd_ctx, in_ctx, *c, data)) ||
+            (res = decode_frame(p, *c, data, in_ctx)))
         {
             break;
         }
-        else if (p) {
+        else if (*p) {
             // Queue frame
             SDL_LockMutex(rd_ctx->lock);
             int seek = rd_ctx->seek;
             SDL_UnlockMutex(rd_ctx->lock);
             if (!seek) {
-                dp_fifo_push(rd_ctx->fifo, p);
+                dp_fifo_push(rd_ctx->fifo, *p);
                 uint32_t type = rd_ctx->event_types + DAV1D_EVENT_NEW_FRAME;
                 dp_rd_ctx_post_event(rd_ctx, type);
             }
@@ -619,8 +627,8 @@ static int decoder_thread_main(void *cookie)
     }
 
     // Release remaining data
-    if (data.sz > 0)
-        dav1d_data_unref(&data);
+    if (data->sz > 0)
+        dav1d_data_unref(data);
     // Do not drain in case an error occured and caused us to leave the
     // decoding loop early.
     if (res < 0)
@@ -635,10 +643,10 @@ static int decoder_thread_main(void *cookie)
     do {
         if (dp_rd_ctx_should_terminate(rd_ctx))
             break;
-        p = calloc(1, sizeof(*p));
-        res = dav1d_get_picture(c, p);
+        Dav1dPicture *fp = dav1d_box_calloc(1, sizeof(Dav1dPicture));
+        res = dav1d_get_picture(*c, fp);
         if (res < 0) {
-            free(p);
+            dav1d_box_free(fp);
             if (res != DAV1D_ERR(EAGAIN)) {
                 fprintf(stderr, "Error decoding frame: %s\n",
                         strerror(-res));
@@ -646,7 +654,7 @@ static int decoder_thread_main(void *cookie)
             }
         } else {
             // Queue frame
-            dp_fifo_push(rd_ctx->fifo, p);
+            dp_fifo_push(rd_ctx->fifo, fp);
             uint32_t type = rd_ctx->event_types + DAV1D_EVENT_NEW_FRAME;
             dp_rd_ctx_post_event(rd_ctx, type);
         }
@@ -658,13 +666,19 @@ cleanup:
     if (in_ctx)
         input_close(in_ctx);
     if (c)
-        dav1d_close(&c);
+        dav1d_close(c);
+
+    dav1d_box_free(c);
+    dav1d_box_free(p);
+    dav1d_box_free(data);
 
     return (res != DAV1D_ERR(EAGAIN) && res < 0);
 }
 
 int main(int argc, char **argv)
 {
+    dav1d_box_init();
+
     SDL_Thread *decoder_thread;
 
     // Check for version mismatch between library and tool
@@ -684,7 +698,7 @@ int main(int argc, char **argv)
 
     if (rd_ctx->settings.zerocopy) {
         if (renderer_info->alloc_pic) {
-            rd_ctx->lib_settings.allocator = (Dav1dPicAllocator) {
+            rd_ctx->lib_settings->allocator = (Dav1dPicAllocator) {
                 .cookie = rd_ctx->rd_priv,
                 .alloc_picture_callback = renderer_info->alloc_pic,
                 .release_picture_callback = renderer_info->release_pic,
@@ -696,7 +710,7 @@ int main(int argc, char **argv)
 
     if (rd_ctx->settings.gpugrain) {
         if (renderer_info->supports_gpu_grain) {
-            rd_ctx->lib_settings.apply_grain = 0;
+            rd_ctx->lib_settings->apply_grain = 0;
         } else {
             fprintf(stderr, "--gpugrain unsupported by selected renderer\n");
         }
