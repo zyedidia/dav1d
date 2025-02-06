@@ -428,19 +428,20 @@ static int dp_rd_ctx_handle_seek(Dav1dPlayRenderContext *rd_ctx,
     if (!res) {
         pts = TS_TO_PTS(data->m.timestamp);
         while (pts < target_pts) {
-            Dav1dPicture *p;
-            if ((res = decode_frame(&p, c, data, in_ctx)))
+            Dav1dPicture **p = dav1d_box_malloc(sizeof(Dav1dPicture));
+            if ((res = decode_frame(p, c, data, in_ctx)))
                 break;
-            if (p) {
-                pts = TS_TO_PTS(p->m.timestamp);
+            if (*p) {
+                pts = TS_TO_PTS((*p)->m.timestamp);
                 if (pts < target_pts)
-                    destroy_pic(p);
+                    destroy_pic(*p);
                 else {
-                    dp_fifo_push(rd_ctx->fifo, p);
+                    dp_fifo_push(rd_ctx->fifo, *p);
                     uint32_t type = rd_ctx->event_types + DAV1D_EVENT_SEEK_FRAME;
                     dp_rd_ctx_post_event(rd_ctx, type);
                 }
             }
+	    dav1d_box_free(p);
         }
         if (!res) {
             rd_ctx->last_ts = data->m.timestamp - rd_ctx->spf / rd_ctx->timebase;
@@ -537,7 +538,7 @@ static int decode_frame(Dav1dPicture **p, Dav1dContext *c,
             goto err;
         }
     }
-    *p = calloc(1, sizeof(**p));
+    *p = dav1d_box_calloc(1, sizeof(**p));
     // Try to get a decoded frame
     if ((res = dav1d_get_picture(c, *p)) < 0) {
         // In all error cases, even EAGAIN, p needs to be freed as
@@ -562,7 +563,7 @@ static inline void destroy_pic(void *a)
 {
     Dav1dPicture *p = (Dav1dPicture *)a;
     dav1d_picture_unref(p);
-    free(p);
+    dav1d_box_free(p);
 }
 
 /* Decoder thread "main" function */
@@ -570,7 +571,6 @@ static int decoder_thread_main(void *cookie)
 {
     Dav1dPlayRenderContext *rd_ctx = cookie;
 
-    printf("hi\n");
     Dav1dPicture **p = dav1d_box_malloc(sizeof(Dav1dPicture));
     Dav1dContext **c = dav1d_box_calloc(1, sizeof(Dav1dContext*));
     Dav1dData *data = dav1d_box_malloc(sizeof(Dav1dData));
@@ -674,6 +674,8 @@ cleanup:
 
     return (res != DAV1D_ERR(EAGAIN) && res < 0);
 }
+
+void dav1d_box_init(void);
 
 int main(int argc, char **argv)
 {
